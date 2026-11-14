@@ -32,13 +32,15 @@
   <div class="row" id="o1">1. Shoot the light switch</div>
   <div class="row" id="o2">2. Ricochet a shot through the present's string</div>
   <div class="row" id="o3">3. Hit the target</div>
+  <div class="row" style="opacity:.8;color:#ff8a8a;margin-top:8px">Ricochet first! Direct hits = +2 shots</div>
 </div>
 <div id="stats"></div>
 <div id="cross"></div>
 <div id="toast"></div>
+<div id="flash" style="position:fixed;inset:0;background:#ff1a1a;opacity:0;pointer-events:none;transition:opacity .25s"></div>
 <div id="overlay"><div class="card">
   <h2 id="ovTitle">LAZARSHOTS</h2>
-  <p id="ovText">A dark room. One gun. Every shot ricochets off walls and mirrors.<br>Light the room, cut the present loose, then hit the target.</p>
+  <p id="ovText">A dark room. One gun. Every shot ricochets off walls and mirrors.<br>Light the room, cut the present loose, then hit the target.<br><b style="color:#ff6b6b">Every hit must ricochet first.</b> Direct hits don't count and cost +2 shots.</p>
   <p class="keys">Mouse: aim &nbsp;·&nbsp; Click: shoot &nbsp;·&nbsp; WASD: move &nbsp;·&nbsp; R: new room &nbsp;·&nbsp; Esc: pause</p>
   <p class="go" id="ovGo">Click to play</p>
 </div></div>
@@ -285,8 +287,23 @@
     updateHud();
   }
 
+  // Direct hits (no ricochet first) don't count and cost extra shots.
+  const PENALTY = 2;
+  function punish(what) {
+    shots += PENALTY; totalShots += PENALTY;
+    const f = $('flash'); f.style.opacity = 0.45; setTimeout(() => (f.style.opacity = 0), 180);
+    toast('NO RICOCHET! ' + what + ' doesn\'t count · +' + PENALTY + ' SHOTS');
+    updateHud();
+  }
+
   function onEvent(b, kind) {
     if (kind === 'mirror' || kind === 'wall') { b.chain++; return; }
+    const direct = b.chain === 0;
+    if (direct && (kind === 'switch' || kind === 'string' || kind === 'target')) {
+      if (kind === 'switch') { b.chain++; flashSwitch(); }
+      punish(kind === 'switch' ? 'Switch' : kind === 'string' ? 'String' : 'Target');
+      return;
+    }
     if (kind === 'switch') {
       b.chain++;
       if (!lightsOn) {
@@ -303,7 +320,7 @@
         stringCut = true; level.string.mesh.visible = false;
         level.target.mesh.material.color.set(0x0d3a40); level.target.mesh.material.emissive.set(0x13c8dd);
         level.target.ring.material.color.set(CYAN);
-        toast(b.chain > 0 ? 'STRING CUT · ' + b.chain + ' BOUNCE TRICK SHOT' : 'STRING CUT');
+        toast('STRING CUT · ' + b.chain + ' BOUNCE TRICK SHOT');
         updateHud();
       }
       return;
