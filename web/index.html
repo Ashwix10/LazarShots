@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LazarShots</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05070a; font-family: system-ui, Segoe UI, Arial, sans-serif; color: #dff8ff; }
+  canvas { display: block; }
+  #hud { position: fixed; top: 16px; left: 16px; pointer-events: none; text-shadow: 0 0 6px #000; }
+  #hud h1 { margin: 0 0 6px; font-size: 20px; letter-spacing: 3px; color: #4ff3ff; }
+  #hud .row { font-size: 14px; margin: 3px 0; opacity: .55; }
+  #hud .row.active { opacity: 1; color: #fff; }
+  #hud .row.done { opacity: .9; color: #6dffb0; text-decoration: line-through; }
+  #stats { position: fixed; top: 16px; right: 16px; text-align: right; font-size: 14px; pointer-events: none; text-shadow: 0 0 6px #000; }
+  #toast { position: fixed; top: 38%; width: 100%; text-align: center; font-size: 28px; font-weight: 700; letter-spacing: 2px; color: #4ff3ff; text-shadow: 0 0 18px #4ff3ff; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #cross { position: fixed; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; pointer-events: none; }
+  #cross:before, #cross:after { content: ""; position: absolute; background: #4ff3ff; }
+  #cross:before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #cross:after { top: 6px; left: 0; height: 2px; width: 14px; }
+  #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(2,4,8,.82); cursor: pointer; }
+  #overlay .card { max-width: 520px; padding: 28px 32px; border: 1px solid #1d5b66; border-radius: 10px; background: #081116; text-align: center; line-height: 1.5; }
+  #overlay h2 { margin: 0 0 8px; color: #4ff3ff; letter-spacing: 4px; font-size: 32px; }
+  #overlay p { margin: 8px 0; font-size: 15px; }
+  #overlay .keys { opacity: .75; font-size: 13px; }
+  #overlay .go { margin-top: 16px; font-weight: 700; color: #fff; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>LAZARSHOTS</h1>
+  <div class="row" id="o1">1. Shoot the light switch</div>
+  <div class="row" id="o2">2. Ricochet a shot through the present's string</div>
+  <div class="row" id="o3">3. Hit the target</div>
+</div>
+<div id="stats"></div>
+<div id="cross"></div>
+<div id="toast"></div>
+<div id="overlay"><div class="card">
+  <h2 id="ovTitle">LAZARSHOTS</h2>
+  <p id="ovText">A dark room. One gun. Every shot ricochets off walls and mirrors.<br>Light the room, cut the present loose, then hit the target.</p>
+  <p class="keys">Mouse: aim &nbsp;·&nbsp; Click: shoot &nbsp;·&nbsp; WASD: move &nbsp;·&nbsp; R: new room &nbsp;·&nbsp; Esc: pause</p>
+  <p class="go" id="ovGo">Click to play</p>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  // ---------------------------------------------------------------- setup
+  const HALF = 10, H = 7, EYE = 1.6, MAX_BOUNCES = 8, SPEED = 32;
+  const CYAN = 0x4ff3ff;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x020306);
+  scene.fog = new THREE.Fog(0x020306, 10, 34);
+
+  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
+  camera.rotation.order = 'YXZ';
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.06);
+  scene.add(ambient);
+  const roomLights = [];
+  [[-5, -5], [5, -5], [-5, 5], [5, 5]].forEach(([x, z]) => {
+    const l = new THREE.PointLight(0xcfefff, 0, 26);
+    l.position.set(x, H - 0.4, z);
+    scene.add(l);
+    roomLights.push(l);
+  });
+
+  // Room shell
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2a3138, roughness: 0.9 });
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x1a1e22, roughness: 0.8 });
+  const room = new THREE.Group();
+  const addPlane = (w, h, mat, pos, rot) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    m.position.copy(pos); m.rotation.set(rot[0], rot[1], rot[2]); room.add(m);
+  };
+  addPlane(2 * HALF, 2 * HALF, floorMat, new THREE.Vector3(0, 0, 0), [-Math.PI / 2, 0, 0]);
+  addPlane(2 * HALF, 2 * HALF, wallMat, new THREE.Vector3(0, H, 0), [Math.PI / 2, 0, 0]);
+  addPlane(2 * HALF, H, wallMat, new THREE.Vector3(0, H / 2, -HALF), [0, 0, 0]);
+  addPlane(2 * HALF, H, wallMat, new THREE.Vector3(0, H / 2, HALF), [0, Math.PI, 0]);
+  addPlane(2 * HALF, H, wallMat, new THREE.Vector3(-HALF, H / 2, 0), [0, Math.PI / 2, 0]);
+  addPlane(2 * HALF, H, wallMat, new THREE.Vector3(HALF, H / 2, 0), [0, -Math.PI / 2, 0]);
+  // Glowing floor grid edges so the room is readable in the dark
+  const grid = new THREE.GridHelper(2 * HALF, 20, 0x0f3a42, 0x0a2228);
+  grid.position.y = 0.01; room.add(grid);
+  scene.add(room);
+
+  // ---------------------------------------------------------------- level objects
+  let level = null;       // { mirrors, sw, target, present, string, group }
+  let roomNo = 0, shots = 0, totalShots = 0;
+  let lightsOn = false, stringCut = false, won = false;
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  function makeRect(center, normal, hu, hv, material, glow) {
+    const n = normal.clone().normalize();
+    const ref = Math.abs(n.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const u = new THREE.Vector3().crossVectors(ref, n).normalize();
+    const v = new THREE.Vector3().crossVectors(n, u).normalize();
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2 * hu, 2 * hv), material);
+    mesh.material.side = THREE.DoubleSide;
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(u, v, n));
+    mesh.position.copy(center);
+    const frame = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(2 * hu + 0.08, 2 * hv + 0.08)),
+      new THREE.LineBasicMaterial({ color: glow }));
+    frame.quaternion.copy(mesh.quaternion);
+    frame.position.copy(center).addScaledVector(n, 0.005);
+    return { c: center.clone(), n, u, v, hu, hv, mesh, frame };
+  }
+
+  function wallPoint(margin) {
+    // Random point on one of the four walls, plus its inward normal.
+    const side = Math.floor(Math.random() * 4);
+    const t = rand(-HALF + margin, HALF - margin), y = rand(1.2, H - 1.4);
+    const P = [[t, y, -HALF], [t, y, HALF], [-HALF, y, t], [HALF, y, t]][side];
+    const N = [[0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0]][side];
+    return { p: new THREE.Vector3(...P), n: new THREE.Vector3(...N), side };
+  }
+
+  function buildLevel() {
+    if (level) scene.remove(level.group);
+    const g = new THREE.Group();
+    roomNo++; shots = 0; lightsOn = false; stringCut = false; won = false;
+    ambient.intensity = 0.06; roomLights.forEach(l => (l.intensity = 0));
+
+    // Mirrors: two on walls (tilted), one floating in the room.
+    const mirrors = [];
+    const mirrorMat = () => new THREE.MeshStandardMaterial({ color: 0x9fd8e8, metalness: 0.9, roughness: 0.12, emissive: 0x0b2a33 });
+    for (let i = 0; i < 2; i++) {
+      const w = wallPoint(2.5);
+      const n = w.n.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rand(-0.6, 0.6));
+      n.y += rand(-0.3, 0.3); n.normalize();
+      mirrors.push(makeRect(w.p.clone().addScaledVector(w.n, 0.35), n, 1.3, 1.0, mirrorMat(), CYAN));
+    }
+    const fn = new THREE.Vector3(rand(-1, 1), rand(-0.25, 0.25), rand(-1, 1)).normalize();
+    mirrors.push(makeRect(new THREE.Vector3(rand(-5, 5), rand(2.2, 4.5), rand(-6, 2)), fn, 1.1, 1.1, mirrorMat(), CYAN));
+    mirrors.forEach(m => { g.add(m.mesh); g.add(m.frame); });
+
+    // Light switch on a wall (it is a solid plate: shots ricochet off it).
+    const sp = wallPoint(1.5);
+    const sw = makeRect(sp.p.clone().addScaledVector(sp.n, 0.03), sp.n, 0.3, 0.45,
+      new THREE.MeshStandardMaterial({ color: 0x111418, emissive: 0x1b8fa0, emissiveIntensity: 0.9 }), CYAN);
+    const swLight = new THREE.PointLight(CYAN, 1.2, 4); swLight.position.copy(sp.p).addScaledVector(sp.n, 0.6);
+    g.add(sw.mesh, sw.frame, swLight);
+    sw.light = swLight;
+
+    // Target + present hanging on a string above it.
+    const tx = rand(-6, 6), tz = rand(-7, 3);
+    const target = { c: new THREE.Vector3(tx, rand(1.2, 2.2), tz), r: 0.45 };
+    target.mesh = new THREE.Mesh(new THREE.SphereGeometry(target.r, 32, 16),
+      new THREE.MeshStandardMaterial({ color: 0x331111, emissive: 0x551010, emissiveIntensity: 1 }));
+    target.mesh.position.copy(target.c);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.03, 8, 48), new THREE.MeshBasicMaterial({ color: 0xff4444 }));
+    ring.position.copy(target.c); target.ring = ring;
+    g.add(target.mesh, ring);
+
+    const present = { c: target.c.clone().add(new THREE.Vector3(0, 1.9, 0)), r: 0.45, vy: 0 };
+    present.mesh = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), new THREE.MeshStandardMaterial({ color: 0xc0283a, emissive: 0x300008 }));
+    const rib1 = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.72, 0.12), new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0x403000 }));
+    const rib2 = rib1.clone(); rib2.rotation.y = Math.PI / 2;
+    present.mesh.add(box, rib1, rib2);
+    present.mesh.position.copy(present.c);
+    g.add(present.mesh);
+
+    const string = { x: tx, z: tz, y0: present.c.y + 0.35, y1: H, r: 0.12 };
+    string.mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, string.y1 - string.y0, 6),
+      new THREE.MeshBasicMaterial({ color: CYAN }));
+    string.mesh.position.set(tx, (string.y0 + string.y1) / 2, tz);
+    string.mesh.visible = false; // only visible once the lights are on
+    g.add(string.mesh);
+
+    scene.add(g);
+    level = { mirrors, sw, target, present, string, group: g };
+
+    // Player starts near the back wall, facing into the room.
+    camera.position.set(0, EYE, HALF - 1.5);
+    yaw = 0; pitch = 0;
+    updateHud();
+  }
+
+  // ---------------------------------------------------------------- ray tracing (shared by aim preview and bullets)
+  const EPS = 1e-4;
+  function hitRect(o, d, r) {
+    const den = d.dot(r.n);
+    if (Math.abs(den) < 1e-6) return null;
+    const t = r.c.clone().sub(o).dot(r.n) / den;
+    if (t <= EPS) return null;
+    const p = o.clone().addScaledVector(d, t), l = p.clone().sub(r.c);
+    if (Math.abs(l.dot(r.u)) > r.hu || Math.abs(l.dot(r.v)) > r.hv) return null;
+    return { t, p, n: r.n };
+  }
+  function hitSphere(o, d, c, rad) {
+    const oc = o.clone().sub(c), b = oc.dot(d), cc = oc.dot(oc) - rad * rad, disc = b * b - cc;
+    if (disc < 0) return null;
+    const t = -b - Math.sqrt(disc);
+    return t > EPS ? { t, p: o.clone().addScaledVector(d, t) } : null;
+  }
+  function hitString(o, d, s) {
+    // Vertical cylinder around (s.x, s.z) between y0 and y1.
+    const ox = o.x - s.x, oz = o.z - s.z, a = d.x * d.x + d.z * d.z;
+    if (a < 1e-8) return null;
+    const b = ox * d.x + oz * d.z, c = ox * ox + oz * oz - s.r * s.r, disc = b * b - a * c;
+    if (disc < 0) return null;
+    const t = (-b - Math.sqrt(disc)) / a;
+    if (t <= EPS) return null;
+    const p = o.clone().addScaledVector(d, t);
+    return p.y >= s.y0 && p.y <= s.y1 ? { t, p } : null;
+  }
+  function hitWalls(o, d) {
+    let best = null;
+    const test = (t, n) => { if (t > EPS && (!best || t < best.t)) best = { t, n }; };
+    if (d.x > 0) test((HALF - o.x) / d.x, new THREE.Vector3(-1, 0, 0)); else if (d.x < 0) test((-HALF - o.x) / d.x, new THREE.Vector3(1, 0, 0));
+    if (d.z > 0) test((HALF - o.z) / d.z, new THREE.Vector3(0, 0, -1)); else if (d.z < 0) test((-HALF - o.z) / d.z, new THREE.Vector3(0, 0, 1));
+    if (d.y > 0) test((H - o.y) / d.y, new THREE.Vector3(0, -1, 0)); else if (d.y < 0) test((0 - o.y) / d.y, new THREE.Vector3(0, 1, 0));
+    if (best) best.p = o.clone().addScaledVector(d, best.t);
+    return best;
+  }
+
+  function nearest(o, d, skipString) {
+    let best = hitWalls(o, d); if (best) best.kind = 'wall';
+    const take = (h, kind, extra) => { if (h && (!best || h.t < best.t)) best = Object.assign(h, { kind }, extra); };
+    level.mirrors.forEach(m => take(hitRect(o, d, m), 'mirror', { obj: m }));
+    take(hitRect(o, d, level.sw), 'switch');
+    take(hitSphere(o, d, level.target.c, level.target.r), 'target');
+    if (!stringCut) {
+      take(hitSphere(o, d, level.present.c, level.present.r), 'present');
+      if (!skipString) take(hitString(o, d, level.string), 'string');
+    }
+    return best;
+  }
+
+  function trace(origin, dir, maxBounces) {
+    const pts = [origin.clone()], events = [];
+    let o = origin.clone(), d = dir.clone().normalize(), bounces = 0, skipString = false;
+    for (let guard = 0; guard < 24; guard++) {
+      const h = nearest(o, d, skipString);
+      if (!h) break;
+      pts.push(h.p.clone());
+      events.push({ kind: h.kind, index: pts.length - 1 });
+      if (h.kind === 'string') { o = h.p.clone().addScaledVector(d, 0.3); skipString = true; continue; }
+      if (h.kind === 'target' || h.kind === 'present') break;
+      if (bounces >= maxBounces) break;
+      d = d.clone().sub(h.n.clone().multiplyScalar(2 * d.dot(h.n))).normalize();
+      o = h.p.clone().addScaledVector(d, 1e-3);
+      bounces++;
+    }
+    return { pts, events };
+  }
+
+  // ---------------------------------------------------------------- aim preview (first two legs only)
+  const aimMat = new THREE.LineDashedMaterial({ color: CYAN, dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.55 });
+  let aimLine = new THREE.Line(new THREE.BufferGeometry(), aimMat);
+  scene.add(aimLine);
+  function updateAim() {
+    const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+    const start = camera.position.clone().addScaledVector(dir, 0.6).add(new THREE.Vector3(0, -0.15, 0));
+    const { pts } = trace(start, dir, 1);
+    aimLine.geometry.dispose();
+    aimLine.geometry = new THREE.BufferGeometry().setFromPoints(pts.slice(0, 3));
+    aimLine.computeLineDistances();
+  }
+
+  // ---------------------------------------------------------------- bullets
+  const bullets = [];
+  function fire() {
+    if (won) return;
+    const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+    const start = camera.position.clone().addScaledVector(dir, 0.6).add(new THREE.Vector3(0, -0.15, 0));
+    const path = trace(start, dir, MAX_BOUNCES);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    const glow = new THREE.PointLight(CYAN, 2, 5); mesh.add(glow);
+    mesh.position.copy(start); scene.add(mesh);
+    const trailGeo = new THREE.BufferGeometry().setFromPoints([start, start]);
+    const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity: 0.9 }));
+    scene.add(trail);
+    bullets.push({ path, seg: 0, dist: 0, mesh, trail, chain: 0, fade: -1 });
+    shots++; totalShots++;
+    updateHud();
+  }
+
+  function onEvent(b, kind) {
+    if (kind === 'mirror' || kind === 'wall') { b.chain++; return; }
+    if (kind === 'switch') {
+      b.chain++;
+      if (!lightsOn) {
+        lightsOn = true;
+        roomLights.forEach(l => (l.intensity = 1.1)); ambient.intensity = 0.35;
+        level.string.mesh.visible = true;
+        toast('LIGHTS ON');
+      } else flashSwitch();
+      updateHud();
+      return;
+    }
+    if (kind === 'string') {
+      if (lightsOn && !stringCut) {
+        stringCut = true; level.string.mesh.visible = false;
+        level.target.mesh.material.color.set(0x0d3a40); level.target.mesh.material.emissive.set(0x13c8dd);
+        level.target.ring.material.color.set(CYAN);
+        toast(b.chain > 0 ? 'STRING CUT · ' + b.chain + ' BOUNCE TRICK SHOT' : 'STRING CUT');
+        updateHud();
+      }
+      return;
+    }
+    if (kind === 'target') {
+      if (stringCut && lightsOn) win(b.chain);
+      else toast(lightsOn ? 'TARGET LOCKED · cut the string first' : 'TOO DARK · hit the switch first');
+      return;
+    }
+    if (kind === 'present') toast('The present blocks the shot');
+  }
+  function flashSwitch() { level.sw.light.intensity = 4; setTimeout(() => level && (level.sw.light.intensity = 1.2), 150); }
+
+  function updateBullets(dt) {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      if (b.fade >= 0) {
+        b.fade += dt; b.trail.material.opacity = Math.max(0, 0.9 - b.fade * 1.5);
+        if (b.fade > 0.6) { scene.remove(b.mesh, b.trail); bullets.splice(i, 1); }
+        continue;
+      }
+      let move = SPEED * dt;
+      const pts = b.path.pts;
+      while (move > 0 && b.seg < pts.length - 1) {
+        const a = pts[b.seg], c = pts[b.seg + 1], len = a.distanceTo(c);
+        if (b.dist + move < len) { b.dist += move; move = 0; }
+        else {
+          move -= len - b.dist; b.seg++; b.dist = 0;
+          const ev = b.path.events.find(e => e.index === b.seg);
+          if (ev) onEvent(b, ev.kind);
+        }
+      }
+      const a = pts[Math.min(b.seg, pts.length - 1)], c = pts[Math.min(b.seg + 1, pts.length - 1)];
+      const len = Math.max(a.distanceTo(c), 1e-6);
+      b.mesh.position.copy(a).lerp(c, Math.min(1, b.dist / len));
+      b.trail.geometry.dispose();
+      b.trail.geometry = new THREE.BufferGeometry().setFromPoints(pts.slice(0, b.seg + 1).concat([b.mesh.position.clone()]));
+      if (b.seg >= pts.length - 1) { b.fade = 0; b.mesh.visible = false; }
+    }
+  }
+
+  // ---------------------------------------------------------------- HUD / flow
+  const $ = id => document.getElementById(id);
+  let toastTimer = 0;
+  function toast(text) { const t = $('toast'); t.textContent = text; t.style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.style.opacity = 0), 1600); }
+  function updateHud() {
+    const set = (id, done, active) => { $(id).className = 'row' + (done ? ' done' : active ? ' active' : ''); };
+    set('o1', lightsOn, !lightsOn);
+    set('o2', stringCut, lightsOn && !stringCut);
+    set('o3', won, lightsOn && stringCut && !won);
+    $('stats').innerHTML = 'Room ' + roomNo + '<br>Shots ' + shots + '<br><span style="opacity:.6">Total ' + totalShots + '</span>';
+  }
+  function win(chain) {
+    won = true; updateHud();
+    toast('ROOM CLEARED');
+    setTimeout(() => {
+      $('ovTitle').textContent = 'ROOM ' + roomNo + ' CLEARED';
+      $('ovText').innerHTML = 'Finished in <b>' + shots + '</b> shot' + (shots === 1 ? '' : 's') + (chain > 0 ? ' · final shot used ' + chain + ' ricochet' + (chain === 1 ? '' : 's') : '') + '.';
+      $('ovGo').textContent = 'Click for the next room';
+      nextOnClick = true;
+      document.exitPointerLock && document.exitPointerLock();
+      $('overlay').style.display = 'flex';
+    }, 900);
+  }
+
+  // ---------------------------------------------------------------- input
+  let yaw = 0, pitch = 0, locked = false, nextOnClick = false;
+  const keys = {};
+  $('overlay').addEventListener('click', () => {
+    if (nextOnClick) { nextOnClick = false; buildLevel(); }
+    renderer.domElement.requestPointerLock();
+  });
+  document.addEventListener('pointerlockchange', () => {
+    locked = document.pointerLockElement === renderer.domElement;
+    if (locked) $('overlay').style.display = 'none';
+    else if (!nextOnClick) {
+      $('ovTitle').textContent = 'PAUSED'; $('ovText').textContent = 'Room ' + roomNo + ' · ' + shots + ' shots so far.';
+      $('ovGo').textContent = 'Click to resume'; $('overlay').style.display = 'flex';
+    }
+  });
+  document.addEventListener('mousemove', e => {
+    if (!locked) return;
+    yaw -= e.movementX * 0.0022; pitch -= e.movementY * 0.0022;
+    pitch = Math.max(-1.45, Math.min(1.45, pitch));
+  });
+  document.addEventListener('mousedown', e => { if (locked && e.button === 0) fire(); });
+  addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyR' && locked) buildLevel(); });
+  addEventListener('keyup', e => { keys[e.code] = false; });
+  addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+  // ---------------------------------------------------------------- loop
+  const clock = new THREE.Clock();
+  function tick() {
+    const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+    camera.rotation.set(pitch, yaw, 0);
+    if (locked) {
+      const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)), r = new THREE.Vector3(-f.z, 0, f.x), m = new THREE.Vector3();
+      if (keys.KeyW) m.add(f); if (keys.KeyS) m.sub(f); if (keys.KeyD) m.add(r); if (keys.KeyA) m.sub(r);
+      if (m.lengthSq() > 0) camera.position.addScaledVector(m.normalize(), 6 * dt);
+      camera.position.x = Math.max(-HALF + 0.5, Math.min(HALF - 0.5, camera.position.x));
+      camera.position.z = Math.max(-HALF + 0.5, Math.min(HALF - 0.5, camera.position.z));
+    }
+    if (level) {
+      level.target.ring.rotation.x = t * 1.3; level.target.ring.rotation.y = t * 0.9;
+      const p = level.present;
+      if (stringCut && p.mesh.position.y > 0.35) {
+        p.vy -= 9.8 * dt; p.mesh.position.y = Math.max(0.35, p.mesh.position.y + p.vy * dt); p.mesh.rotation.z += dt * 2;
+      } else if (!stringCut) p.mesh.rotation.y = Math.sin(t) * 0.25;
+      updateAim();
+    }
+    updateBullets(dt);
+    renderer.render(scene, camera);
+    requestAnimationFrame(tick);
+  }
+
+  buildLevel();
+  tick();
+})();
+</script>
+</body>
+</html>
