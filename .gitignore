@@ -1,0 +1,32 @@
+# Unreal generated / build output
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# IDE / solution files (regenerate via right-click MyProject.uproject > Generate Visual Studio project files)
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Pixel Streaming: downloaded/installed by scripts, not source
+PixelStreaming/**/node_modules/
+PixelStreaming/**/platform_scripts/cmd/node/
+PixelStreaming/**/platform_scripts/cmd/node.zip
+PixelStreaming/**/dist/
+PixelStreaming/**/logs/
+PixelStreaming/SignallingWebServer/www/
+
+# Misc
+*.log
+*.tmp
