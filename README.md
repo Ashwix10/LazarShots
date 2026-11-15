@@ -2,3 +2,8 @@
 
 - Assets used
 - Unreal base assets
+
+
+- AI decleration:
+- used ai for generative algorithm that makes different levels
+- used it for shooting effects
